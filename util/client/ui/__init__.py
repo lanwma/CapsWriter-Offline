@@ -26,6 +26,8 @@ from util.ui import (
     ToastMessageManager,
     enable_min_to_tray,
     stop_tray,
+    set_tray_recording,
+    activate_tray_window,
 )
 
 # 4. 导出菜单处理器（供 Startup 使用）
@@ -42,6 +44,8 @@ __all__ = [
     'ToastMessageManager',
     'enable_min_to_tray',
     'stop_tray',
+    'set_tray_recording',
+    'activate_tray_window',
     'on_add_rectify_record',
     'on_add_hotword',
     'on_edit_context',

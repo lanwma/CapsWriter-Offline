@@ -143,7 +143,13 @@ def _is_window_visible(hwnd: int) -> bool:
     return user32.IsWindowVisible(hwnd) != 0
 
 
-def _create_icon(icon_path: Optional[str] = None):
+def _hide_window(hwnd: int) -> None:
+    """强制隐藏窗口"""
+    if hwnd and user32 is not None:
+        user32.ShowWindow(hwnd, SW_HIDE)
+
+
+def _create_icon(icon_path: Optional[str] = None, recording: bool = False):
     """
     创建托盘图标
     
@@ -163,7 +169,11 @@ def _create_icon(icon_path: Optional[str] = None):
             image = Image.open(icon_path)
             if image.mode != 'RGBA':
                 image = image.convert('RGBA')
-            return image.resize((64, 64), Image.Resampling.LANCZOS)
+            image = image.resize((64, 64), Image.Resampling.LANCZOS)
+            if recording:
+                dc = ImageDraw.Draw(image)
+                dc.ellipse([42, 6, 60, 24], fill=(229, 57, 53), outline=(255, 255, 255), width=2)
+            return image
         except Exception:
             pass  # 加载失败则使用动态生成
 
@@ -196,7 +206,11 @@ def _create_icon(icon_path: Optional[str] = None):
     r2 = r // 2
     dc.ellipse([center - r2, center - r2, center + r2, center + r2], fill=white)
 
-    return image.resize((size, size), Image.Resampling.LANCZOS)
+    image = image.resize((size, size), Image.Resampling.LANCZOS)
+    if recording:
+        dc = ImageDraw.Draw(image)
+        dc.ellipse([42, 6, 60, 24], fill=(229, 57, 53), outline=(255, 255, 255), width=2)
+    return image
 
 
 class _TraySystem:
@@ -210,6 +224,8 @@ class _TraySystem:
         self.hwnd = _get_console_hwnd()
         self.should_exit = False
         self.title = name if name else (os.path.basename(sys.argv[0]) or "Console App")
+        self.icon_path = icon_path
+        self.recording = False
 
         # 禁用关闭按钮
         if self.hwnd:
@@ -218,7 +234,7 @@ class _TraySystem:
         # 定义菜单
         menu_items = [
             item(f"{self.title}", lambda: None, enabled=False),
-            item('👁️ 显示/隐藏', self.toggle_window, default=True),
+            item('👁️ 显示/隐藏', self.toggle_window, default=True, enabled=bool(self.hwnd)),
         ]
 
         # 添加额外选项
@@ -230,10 +246,26 @@ class _TraySystem:
 
         self.icon = pystray.Icon(
             "console_tray",
-            _create_icon(icon_path),
-            title=f"{self.title}",
+            _create_icon(icon_path, recording=False),
+            title=self._build_title(),
             menu=tuple(menu_items)
         )
+
+    def _build_title(self) -> str:
+        """构建托盘标题文本"""
+        return f"{self.title} - 录音中" if self.recording else f"{self.title} - 空闲"
+
+    def set_recording(self, recording: bool) -> None:
+        """更新托盘图标和标题中的录音状态"""
+        if self.recording == recording:
+            return
+
+        self.recording = recording
+        try:
+            self.icon.icon = _create_icon(self.icon_path, recording=recording)
+            self.icon.title = self._build_title()
+        except Exception as e:
+            logger.warning(f"更新托盘状态失败: {e}")
 
     def toggle_window(self) -> None:
         """切换窗口显示状态"""
@@ -241,10 +273,31 @@ class _TraySystem:
             return
 
         if _is_window_visible(self.hwnd):
-            user32.ShowWindow(self.hwnd, SW_HIDE)
+            _hide_window(self.hwnd)
         else:
             user32.ShowWindow(self.hwnd, SW_RESTORE)
             user32.SetForegroundWindow(self.hwnd)
+
+    def hide_window(self) -> None:
+        """隐藏控制台窗口"""
+        if not self.hwnd or user32 is None:
+            return
+        _hide_window(self.hwnd)
+
+    def ensure_hidden_async(self, attempts: int = 20, interval: float = 0.2) -> None:
+        """异步重试隐藏窗口，避免启动阶段窗口重新弹出"""
+        if not self.hwnd:
+            return
+
+        def worker():
+            for _ in range(attempts):
+                if self.should_exit:
+                    return
+                if _is_window_visible(self.hwnd):
+                    _hide_window(self.hwnd)
+                time.sleep(interval)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def monitor_loop(self) -> None:
         """监控线程：检测最小化操作"""
@@ -296,12 +349,14 @@ class _TraySystem:
         t_tray = threading.Thread(target=self.icon.run, daemon=False)
         t_tray.start()
 
-        # 状态监控线程
-        t_monitor = threading.Thread(target=self.monitor_loop, daemon=True)
-        t_monitor.start()
+        if self.hwnd:
+            # 状态监控线程
+            t_monitor = threading.Thread(target=self.monitor_loop, daemon=True)
+            t_monitor.start()
 
-        # 启动时隐藏窗口
-        self.toggle_window()
+            # 启动时强制隐藏窗口，并在启动初期重复压制一次
+            self.hide_window()
+            self.ensure_hidden_async()
 
 
 def enable_min_to_tray(name: Optional[str] = None, icon_path: Optional[str] = None, exit_callback=None, more_options: list = None) -> None:
@@ -341,12 +396,33 @@ def enable_min_to_tray(name: Optional[str] = None, icon_path: Optional[str] = No
         if _tray_instance is not None:
             return  # 已启动
 
-        if not _get_console_hwnd():
-            return  # 没有控制台窗口
-
         _tray_instance = _TraySystem(name, icon_path, more_options)
         _tray_instance.start()
 
+
+def set_tray_recording(recording: bool) -> None:
+    """更新托盘中的录音状态"""
+    if _tray_instance is not None:
+        _tray_instance.set_recording(recording)
+
+
+
+def activate_tray_window() -> bool:
+    """激活托盘关联的控制台窗口。"""
+    if _tray_instance is None:
+        return False
+
+    hwnd = _tray_instance.hwnd
+    if not hwnd or user32 is None:
+        return False
+
+    try:
+        user32.ShowWindow(hwnd, SW_RESTORE)
+        user32.SetForegroundWindow(hwnd)
+        return True
+    except Exception as e:
+        logger.warning(f"激活托盘窗口失败: {e}")
+        return False
 
 
 def stop_tray() -> None:

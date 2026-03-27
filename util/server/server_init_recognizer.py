@@ -1,6 +1,4 @@
 import time
-import sys
-import os 
 from multiprocessing import Queue
 import signal
 import atexit
@@ -9,6 +7,7 @@ from config_server import ServerConfig as Config
 from config_server import ParaformerArgs, ModelPaths, SenseVoiceArgs, FunASRNanoGGUFArgs, Qwen3ASRGGUFArgs
 from util.server.server_check_model import check_model
 from util.server.server_cosmic import console
+from util.server.runtime_context import attach_inherited_stdin
 from util.server.server_recognize import recognize
 from util.fun_asr_gguf import create_asr_engine as create_fun_asr_engine
 from util.qwen_asr_gguf import create_asr_engine as create_qwen_asr_engine
@@ -50,12 +49,15 @@ def signal_handler(signum, frame):
 
 
 
-def init_recognizer(queue_in: Queue, queue_out: Queue, sockets_id, stdin_fn):
+def init_recognizer(queue_in: Queue, queue_out: Queue, sockets_id, stdin_fileno=None):
     global _resources_initialized
 
     logger.info("识别子进程启动")
     logger.debug(f"系统平台: {system()}")
-    sys.stdin=os.fdopen(stdin_fn)
+    if attach_inherited_stdin(stdin_fileno):
+        logger.debug("识别子进程已恢复继承 stdin")
+    else:
+        logger.debug("识别子进程未绑定 stdin，将继续以无控制台模式运行")
 
     # 注册信号处理器
     signal.signal(signal.SIGINT, signal_handler)

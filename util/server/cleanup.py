@@ -7,15 +7,15 @@
 
 import os
 import asyncio
-from rich.console import Console
 
 from config_server import ServerConfig as Config, __version__
 from . import logger
 from util.common.lifecycle import lifecycle
+from util.server.runtime_context import create_server_console
 from util.server.state import get_state
 from util.ui.tray import stop_tray
 
-console = Console(highlight=False)
+console = create_server_console()
 
 # 计算项目根目录: util/server/cleanup.py -> util/server -> util -> root
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

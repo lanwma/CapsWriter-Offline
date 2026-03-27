@@ -64,6 +64,7 @@ hiddenimports += [
     'rich',
     'rich.console',
     'rich.markdown',
+    'rich._unicode_data.unicode17-0-0',
     'keyboard',
     'pyclip',
     'numpy',
@@ -144,7 +145,7 @@ exe_2 = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -163,7 +164,7 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='CapsWriter-Offline-Client',
+    name='CapsWriter-Offline-privacy-client',
 )
 
 

@@ -5,6 +5,7 @@ import websockets
 from config_server import ServerConfig as Config, __version__
 from util.server.server_ws_recv import ws_recv
 from util.server.server_ws_send import ws_send
+from util.server.runtime_context import has_interactive_stdin, has_console_output
 from util.tools.empty_working_set import empty_current_working_set
 from util.logger import setup_logger
 from util.common.lifecycle import lifecycle
@@ -111,11 +112,14 @@ def init():
         lifecycle.cleanup()
     except OSError as e:
         logger.error(f"OSError 错误: {e}")
-        console.print(f'出错了：{e}', style='bright_red'); console.input('...')
+        console.print(f'出错了：{e}', style='bright_red')
+        if has_interactive_stdin():
+            console.input('...')
         lifecycle.cleanup()
     except Exception as e:
         logger.error(f"未处理的异常: {e}", exc_info=True)
-        print(e)
+        if has_console_output():
+            print(e)
         lifecycle.cleanup()
         raise
      

@@ -1,11 +1,10 @@
 
 import asyncio
-import sys 
-import os 
 from multiprocessing import Process, Manager
 import queue
 from util.server.server_cosmic import Cosmic, console
 from util.server.server_init_recognizer import init_recognizer
+from util.server.runtime_context import get_inheritable_stdin_fileno
 from util.server.state import get_state
 from util.server.server_check_model import check_model
 from util.common.lifecycle import lifecycle
@@ -19,12 +18,12 @@ def start_recognizer_process():
 
     state = get_state()
     Cosmic.sockets_id = Manager().list()
-    stdin_fn = sys.stdin.fileno()
+    stdin_fileno = get_inheritable_stdin_fileno()
     recognize_process = Process(target=init_recognizer,
                                 args=(Cosmic.queue_in,
                                       Cosmic.queue_out,
                                       Cosmic.sockets_id, 
-                                      stdin_fn),
+                                      stdin_fileno),
                                 daemon=False)
     recognize_process.start()
     state.recognize_process = recognize_process

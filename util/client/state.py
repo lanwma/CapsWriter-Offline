@@ -129,6 +129,11 @@ class ClientState:
         """
         self.recording = True
         self.recording_start_time = start_time
+        try:
+            from util.client.ui import set_tray_recording
+            set_tray_recording(True)
+        except Exception as e:
+            logger.debug(f"更新托盘录音状态失败: {e}")
         logger.debug(f"录音状态已更新: recording=True, start_time={start_time:.2f}")
     
     def stop_recording(self) -> float:
@@ -144,6 +149,11 @@ class ClientState:
         
         self.recording = False
         self.recording_start_time = 0.0
+        try:
+            from util.client.ui import set_tray_recording
+            set_tray_recording(False)
+        except Exception as e:
+            logger.debug(f"更新托盘录音状态失败: {e}")
         logger.debug(f"录音状态已更新: recording=False, duration={duration:.2f}s")
         return duration
     
