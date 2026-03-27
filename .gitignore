@@ -188,3 +188,28 @@ file_*.txt
 release
 *.dll 
 *.exe
+
+# ==================== 本地开发补充忽略 ====================
+
+# Cursor / 本地代理配置
+.cursor/
+.agent/
+
+# Windows 系统文件
+Thumbs.db
+Desktop.ini
+
+# 更明确的 Python 缓存忽略（递归）
+**/__pycache__/
+*.pyc
+*.pyo
+
+# 本项目运行与打包产物
+dist/
+build/
+logs/
+
+# 本地环境目录
+.venv/
+venv/
+env/

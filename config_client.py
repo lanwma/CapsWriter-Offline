@@ -17,27 +17,21 @@ class ClientConfig:
     # 快捷键配置列表
     shortcuts = [
         {
-            'key': 'caps_lock',     # 监听大写锁定键
-            'type': 'keyboard',     # 是键盘快捷键
-            'suppress': True,      # 不阻塞按键（但录音结束会补发）
-            'hold_mode': True,      # 长按模式
-            'enabled': True         # 启用此快捷键
-        },
-        {
-            'key': 'x2',
+            'key': 'x1',
             'type': 'mouse',
             'suppress': True,
-            'hold_mode': True,
+            'hold_mode': False,
             'enabled': True
         },
     ]
 
     threshold    = 0.3          # 快捷键触发阈值（秒）
+    mic_open_on_demand = True   # 是否仅在开始录音时打开麦克风，空闲时释放设备
 
     paste        = False        # 是否以写入剪切板然后模拟 Ctrl-V 粘贴的方式输出结果
     restore_clip = True         # 模拟粘贴后是否恢复剪贴板
 
-    save_audio = True           # 是否保存录音文件
+    save_audio = False          # 是否保存录音文件
     audio_name_len = 20         # 将录音识别结果的前多少个字存储到录音文件名中，建议不要超过200
     
     context = ''                # 提示词上下文，用于辅助 Fun-ASR-Nano 模型识别（例如输入人名、地名、专业术语等）
@@ -72,7 +66,7 @@ class ClientConfig:
     file_save_json = True       # 转录文件时是否保存 json 结果（含原始时间戳）
     file_save_merge = False      # 转录文件时是否保存 merge.txt（未切分的段落长文本）
 
-    udp_broadcast = True                # 是否启用 UDP 广播输出结果
+    udp_broadcast = False               # 是否启用 UDP 广播输出结果
     udp_broadcast_targets = [           # UDP 广播目标地址列表，格式: (地址, 端口)
         ('127.255.255.255', 6017),      # 本地回环广播
         # ('192.168.1.255', 6017),      # 局域网广播（示例，按需启用）
