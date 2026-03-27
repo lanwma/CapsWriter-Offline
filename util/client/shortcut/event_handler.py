@@ -39,22 +39,30 @@ class ShortcutEventHandler:
             return
 
         # 单击模式
-        if task.released:
-            from threading import Event
-            task.pressed = True
-            task.released = False
-            task.event = Event()  # 创建新事件对象
-            self.pool.submit(self._count_down, task)
-            self.pool.submit(self._manage_task, task)
+        if task.pressed:
+            return
+
+        task.pressed = True
+        task.released = False
 
     def handle_keyup(self, key_name, task) -> None:
         """处理按键释放事件"""
         # 单击模式
         if not task.shortcut.hold_mode:
-            if task.pressed:
-                task.pressed = False
-                task.released = True
-                task.event.set()
+            if not task.pressed:
+                return
+
+            task.pressed = False
+            task.released = True
+
+            if task.should_debounce_toggle():
+                logger.debug(f"[{key_name}] 忽略过近的重复单击事件")
+                return
+
+            if task.is_recording:
+                task.finish()
+            else:
+                task.launch()
             return
 
         # 长按模式
@@ -79,22 +87,3 @@ class ShortcutEventHandler:
         if task.shortcut.suppress:
             logger.debug(f"[{key_name}] 安排异步补发按键")
             self.pool.submit(self.emulator.emulate_key, key_name)
-
-    def _count_down(self, task) -> None:
-        """倒计时（单击模式）"""
-        time.sleep(task.threshold)
-        task.event.set()
-
-    def _manage_task(self, task) -> None:
-        """管理录音任务（单击模式）"""
-        was_recording = task.is_recording
-
-        if not was_recording:
-            task.launch()
-
-        if task.event.wait(timeout=task.threshold * 0.8):
-            if task.is_recording and was_recording:
-                task.finish()
-        else:
-            if not was_recording:
-                task.cancel()

@@ -158,10 +158,7 @@ class ShortcutManager:
         """处理鼠标按键释放事件"""
         # 单击模式
         if not task.shortcut.hold_mode:
-            if task.pressed:
-                task.pressed = False
-                task.released = True
-                task.event.set()
+            self._event_handler.handle_keyup(button_name, task)
             return
 
         # 长按模式

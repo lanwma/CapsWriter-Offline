@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Optional
 import numpy as np
 import sounddevice as sd
 
+from config_client import ClientConfig as Config
 from util.client.state import console, get_state
 from . import logger
 from util.common.lifecycle import lifecycle
@@ -54,6 +55,7 @@ class AudioStreamManager:
         self.state = state
         self._channels = 1
         self._running = False  # 标志是否应该运行
+        self._stream_lock = threading.RLock()
     
     def _audio_callback(
         self,
@@ -103,65 +105,72 @@ class AudioStreamManager:
         Returns:
             创建的音频输入流，如果失败返回 None
         """
-        # 检测音频设备
-        try:
-            device = sd.query_devices(kind='input')
-            self._channels = min(2, device['max_input_channels'])
-            device_name = device.get('name', '未知设备')
-            console.print(
-                f'使用默认音频设备：[italic]{device_name}，声道数：{self._channels}',
-                end='\n\n'
-            )
-            logger.info(f"找到音频设备: {device_name}, 声道数: {self._channels}")
-        except UnicodeDecodeError:
-            console.print(
-                "由于编码问题，暂时无法获得麦克风设备名字",
-                end='\n\n',
-                style='bright_red'
-            )
-            logger.warning("无法获取音频设备名称（编码问题）")
-        except sd.PortAudioError:
-            console.print("没有找到麦克风设备", end='\n\n', style='bright_red')
-            logger.error("未找到麦克风设备")
-            input('按回车键退出')
-            sys.exit(1)
-        
-        # 创建音频流
-        try:
-            stream = sd.InputStream(
-                samplerate=self.SAMPLE_RATE,
-                blocksize=int(self.BLOCK_DURATION * self.SAMPLE_RATE),
-                device=None,
-                dtype="float32",
-                channels=self._channels,
-                callback=self._audio_callback,
-                finished_callback=self._on_stream_finished,
-            )
-            stream.start()
+        with self._stream_lock:
+            if self.state.stream is not None:
+                return self.state.stream
+
+            # 检测音频设备
+            try:
+                device = sd.query_devices(kind='input')
+                self._channels = min(2, device['max_input_channels'])
+                device_name = device.get('name', '未知设备')
+                console.print(
+                    f'使用默认音频设备：[italic]{device_name}，声道数：{self._channels}',
+                    end='\n\n'
+                )
+                logger.info(f"找到音频设备: {device_name}, 声道数: {self._channels}")
+            except UnicodeDecodeError:
+                console.print(
+                    "由于编码问题，暂时无法获得麦克风设备名字",
+                    end='\n\n',
+                    style='bright_red'
+                )
+                logger.warning("无法获取音频设备名称（编码问题）")
+            except sd.PortAudioError:
+                console.print("没有找到麦克风设备", end='\n\n', style='bright_red')
+                logger.error("未找到麦克风设备")
+                if not Config.mic_open_on_demand:
+                    input('按回车键退出')
+                    sys.exit(1)
+                return None
             
-            self.state.stream = stream
-            self._running = True
-            logger.debug(
-                f"音频流已启动: 采样率={self.SAMPLE_RATE}, "
-                f"块大小={int(self.BLOCK_DURATION * self.SAMPLE_RATE)}"
-            )
-            return stream
-            
-        except Exception as e:
-            logger.error(f"创建音频流失败: {e}", exc_info=True)
-            return None
+            # 创建音频流
+            try:
+                stream = sd.InputStream(
+                    samplerate=self.SAMPLE_RATE,
+                    blocksize=int(self.BLOCK_DURATION * self.SAMPLE_RATE),
+                    device=None,
+                    dtype="float32",
+                    channels=self._channels,
+                    callback=self._audio_callback,
+                    finished_callback=self._on_stream_finished,
+                )
+                stream.start()
+                
+                self.state.stream = stream
+                self._running = True
+                logger.debug(
+                    f"音频流已启动: 采样率={self.SAMPLE_RATE}, "
+                    f"块大小={int(self.BLOCK_DURATION * self.SAMPLE_RATE)}"
+                )
+                return stream
+                
+            except Exception as e:
+                logger.error(f"创建音频流失败: {e}", exc_info=True)
+                return None
     
     def close(self) -> None:
         """关闭音频流"""
-        self._running = False  # 标记为停止
-        if self.state.stream is not None:
-            try:
-                self.state.stream.close()
-                logger.debug("音频流已关闭")
-            except Exception as e:
-                logger.debug(f"关闭音频流时发生错误: {e}")
-            finally:
-                self.state.stream = None
+        with self._stream_lock:
+            self._running = False  # 标记为停止
+            if self.state.stream is not None:
+                try:
+                    self.state.stream.close()
+                    logger.debug("音频流已关闭")
+                except Exception as e:
+                    logger.debug(f"关闭音频流时发生错误: {e}")
+                finally:
+                    self.state.stream = None
     
     def reopen(self) -> Optional[sd.InputStream]:
         """
@@ -189,3 +198,9 @@ class AudioStreamManager:
         
         # 打开新流
         return self.open()
+
+    def ensure_open(self) -> bool:
+        """确保音频流已打开。"""
+        if self.state.stream is not None:
+            return True
+        return self.open() is not None

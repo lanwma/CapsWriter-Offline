@@ -7,9 +7,10 @@
 
 import asyncio
 import time
-from threading import Event
+from threading import Event, Lock
 from typing import TYPE_CHECKING, Optional
 
+from config_client import ClientConfig as Config
 from . import logger
 from util.tools.my_status import Status
 
@@ -49,6 +50,9 @@ class ShortcutTask:
         self.pressed: bool = False
         self.released: bool = True
         self.event: Event = Event()
+        self._transition_lock = Lock()
+        self.last_toggle_time: float = 0.0
+        self.toggle_debounce: float = 0.2
 
         # 线程池（用于 countdown）
         self.pool = None
@@ -65,63 +69,94 @@ class ShortcutTask:
 
     def launch(self) -> None:
         """启动录音任务"""
-        logger.info(f"[{self.shortcut.key}] 触发：开始录音")
+        with self._transition_lock:
+            if self.is_recording:
+                logger.debug(f"[{self.shortcut.key}] 忽略重复开始录音")
+                return
 
-        # 记录开始时间
-        self.recording_start_time = time.time()
-        self.is_recording = True
+            if self.state.stream_manager is None:
+                logger.error(f"[{self.shortcut.key}] 音频流管理器未初始化，无法开始录音")
+                return
 
-        # 将开始标志放入队列
-        asyncio.run_coroutine_threadsafe(
-            self.state.queue_in.put({'type': 'begin', 'time': self.recording_start_time, 'data': None}),
-            self.state.loop
-        )
+            if not self.state.stream_manager.ensure_open():
+                logger.warning(f"[{self.shortcut.key}] 麦克风未就绪，取消本次录音")
+                return
 
-        # 更新录音状态
-        self.state.start_recording(self.recording_start_time)
+            logger.info(f"[{self.shortcut.key}] 触发：开始录音")
 
-        # 打印动画：正在录音
-        self._status.start()
+            # 记录开始时间
+            self.recording_start_time = time.time()
+            self.last_toggle_time = self.recording_start_time
+            self.is_recording = True
 
-        # 启动识别任务
-        recorder = self._get_recorder()
-        self.task = asyncio.run_coroutine_threadsafe(
-            recorder.record_and_send(),
-            self.state.loop,
-        )
+            # 将开始标志放入队列
+            asyncio.run_coroutine_threadsafe(
+                self.state.queue_in.put({'type': 'begin', 'time': self.recording_start_time, 'data': None}),
+                self.state.loop
+            )
+
+            # 更新录音状态
+            self.state.start_recording(self.recording_start_time)
+
+            # 打印动画：正在录音
+            self._status.start()
+
+            # 启动识别任务
+            recorder = self._get_recorder()
+            self.task = asyncio.run_coroutine_threadsafe(
+                recorder.record_and_send(),
+                self.state.loop,
+            )
 
     def cancel(self) -> None:
         """取消录音任务（时间过短）"""
-        logger.debug(f"[{self.shortcut.key}] 取消录音任务（时间过短）")
+        with self._transition_lock:
+            logger.debug(f"[{self.shortcut.key}] 取消录音任务（时间过短）")
 
-        self.is_recording = False
-        self.state.stop_recording()
-        self._status.stop()
+            self.is_recording = False
+            self.last_toggle_time = time.time()
+            self.state.stop_recording()
+            self._status.stop()
 
-        self.task.cancel()
-        self.task = None
+            if self.task is not None:
+                self.task.cancel()
+                self.task = None
+
+            self._release_mic_if_needed()
 
     def finish(self) -> None:
         """完成录音任务"""
-        logger.info(f"[{self.shortcut.key}] 释放：完成录音")
+        with self._transition_lock:
+            if not self.is_recording:
+                logger.debug(f"[{self.shortcut.key}] 忽略重复结束录音")
+                return
 
-        self.is_recording = False
-        self.state.stop_recording()
-        self._status.stop()
+            logger.info(f"[{self.shortcut.key}] 释放：完成录音")
 
-        asyncio.run_coroutine_threadsafe(
-            self.state.queue_in.put({
-                'type': 'finish',
-                'time': time.time(),
-                'data': None
-            }),
-            self.state.loop
-        )
+            self.is_recording = False
+            self.last_toggle_time = time.time()
+            self.state.stop_recording()
+            self._status.stop()
 
-        # 执行 restore（可恢复按键 + 非阻塞模式）
-        # 阻塞模式下按键不会发送到系统，状态不会改变，不需要恢复
-        if self.shortcut.is_toggle_key() and not self.shortcut.suppress:
-            self._restore_key()
+            asyncio.run_coroutine_threadsafe(
+                self.state.queue_in.put({
+                    'type': 'finish',
+                    'time': time.time(),
+                    'data': None
+                }),
+                self.state.loop
+            )
+
+            # 执行 restore（可恢复按键 + 非阻塞模式）
+            # 阻塞模式下按键不会发送到系统，状态不会改变，不需要恢复
+            if self.shortcut.is_toggle_key() and not self.shortcut.suppress:
+                self._restore_key()
+
+            self._release_mic_if_needed()
+
+    def should_debounce_toggle(self) -> bool:
+        """检查是否应忽略过近的重复切换事件"""
+        return (time.time() - self.last_toggle_time) < self.toggle_debounce
 
     def _restore_key(self) -> None:
         """恢复按键状态（防自捕获逻辑由 ShortcutManager 处理）"""
@@ -133,3 +168,8 @@ class ShortcutTask:
             manager.schedule_restore(self.shortcut.key)
         else:
             logger.warning(f"[{self.shortcut.key}] manager 引用丢失，无法 restore")
+
+    def _release_mic_if_needed(self) -> None:
+        """按需模式下在录音结束后释放麦克风占用。"""
+        if Config.mic_open_on_demand and self.state.stream_manager is not None:
+            self.state.stream_manager.close()

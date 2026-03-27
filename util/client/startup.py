@@ -28,6 +28,9 @@ def _setup_tray(state, base_dir):
 
     def restart_audio():
         if state.stream_manager:
+            if Config.mic_open_on_demand and not state.recording and state.stream is None:
+                logger.info("音频当前处于按需关闭状态，下次录音时会自动重新打开")
+                return
             state.stream_manager.reopen()
             logger.info("用户请求重启音频")
 
@@ -123,10 +126,13 @@ def setup_client_components(base_dir):
     logger.info("LLM 系统初始化完成")
 
     # 5. 音频流
-    logger.info("正在打开音频流...")
     stream_manager = AudioStreamManager(state)
     state.stream_manager = stream_manager
-    stream_manager.open()
+    if Config.mic_open_on_demand:
+        logger.info("已启用按需打开麦克风，空闲时不占用音频设备")
+    else:
+        logger.info("正在打开音频流...")
+        stream_manager.open()
 
     # 6. 快捷键管理器（统一管理键盘和鼠标快捷键）
     # 从 Config.shortcuts 列表创建 Shortcut 对象
