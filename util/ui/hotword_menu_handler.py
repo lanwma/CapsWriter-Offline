@@ -8,10 +8,10 @@
 import queue
 import threading
 import tkinter as tk
-from pathlib import Path
 from typing import Optional
 
-from util.client.state import get_state, console
+from util.client.state import console
+from util.hotword.persistence import append_lines_to_hotword_file
 from . import logger
 
 
@@ -67,27 +67,9 @@ def _save_hotwords(text: str) -> None:
     Args:
         text: 热词文本（支持多行）
     """
-    hot_file = Path('hot.txt')
-    
-    # 确保文件存在
-    if not hot_file.exists():
-        hot_file.touch()
-
-    # 读取现有内容，检查最后是否有换行
-    content = hot_file.read_text(encoding='utf-8')
-    needs_newline = content and not content.endswith('\n')
-
-    # 追加记录到文件
-    with open(hot_file, 'a', encoding='utf-8') as f:
-        if needs_newline:
-            f.write('\n')
-        
-        # 处理每一行
-        lines = [line.strip() for line in text.split('\n') if line.strip()]
-        for line in lines:
-            f.write(f"{line}\n")
-
-    logger.debug(f"已追加 {len(lines)} 个热词到 {hot_file}")
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    written_files = append_lines_to_hotword_file('hot.txt', lines)
+    logger.debug(f"已追加 {len(lines)} 个热词到: {written_files}")
 
 
 class _HotwordDialogManager:
