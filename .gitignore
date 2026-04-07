@@ -208,6 +208,7 @@ Desktop.ini
 dist/
 build/
 logs/
+hot.txt
 
 # 本地环境目录
 .venv/
