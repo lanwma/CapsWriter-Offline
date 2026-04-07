@@ -17,6 +17,7 @@ import numpy as np
 import sounddevice as sd
 
 from config_client import ClientConfig as Config
+from util import get_logger
 from util.client.state import console, get_state
 from . import logger
 from util.common.lifecycle import lifecycle
@@ -24,6 +25,8 @@ from util.common.lifecycle import lifecycle
 if TYPE_CHECKING:
     from util.client.state import ClientState
 
+
+timing_logger = get_logger('client_timing')
 
 
 class AudioStreamManager:
@@ -56,6 +59,7 @@ class AudioStreamManager:
         self._channels = 1
         self._running = False  # 标志是否应该运行
         self._stream_lock = threading.RLock()
+        self._last_recording_start_time: float = 0.0
     
     def _audio_callback(
         self,
@@ -72,6 +76,13 @@ class AudioStreamManager:
         # 只在录音状态时处理数据
         if not self.state.recording:
             return
+
+        if self.state.recording_start_time != self._last_recording_start_time:
+            self._last_recording_start_time = self.state.recording_start_time
+            first_frame_latency_ms = (
+                time.time() - self.state.recording_start_time
+            ) * 1000
+            timing_logger.info(f"首帧麦克风回调到达，延迟: {first_frame_latency_ms:.2f}ms")
         
         import asyncio
         
@@ -106,19 +117,30 @@ class AudioStreamManager:
             创建的音频输入流，如果失败返回 None
         """
         with self._stream_lock:
+            open_start = time.perf_counter()
             if self.state.stream is not None:
+                timing_logger.info("音频流已存在，跳过 open()")
                 return self.state.stream
 
             # 检测音频设备
             try:
+                query_start = time.perf_counter()
                 device = sd.query_devices(kind='input')
+                query_ms = (time.perf_counter() - query_start) * 1000
                 self._channels = min(2, device['max_input_channels'])
                 device_name = device.get('name', '未知设备')
                 console.print(
                     f'使用默认音频设备：[italic]{device_name}，声道数：{self._channels}',
                     end='\n\n'
                 )
-                logger.info(f"找到音频设备: {device_name}, 声道数: {self._channels}")
+                logger.info(
+                    f"找到音频设备: {device_name}, 声道数: {self._channels}, "
+                    f"query_devices耗时: {query_ms:.2f}ms"
+                )
+                timing_logger.info(
+                    f"音频设备={device_name}, 声道数={self._channels}, "
+                    f"query_devices耗时={query_ms:.2f}ms"
+                )
             except UnicodeDecodeError:
                 console.print(
                     "由于编码问题，暂时无法获得麦克风设备名字",
@@ -136,6 +158,7 @@ class AudioStreamManager:
             
             # 创建音频流
             try:
+                construct_start = time.perf_counter()
                 stream = sd.InputStream(
                     samplerate=self.SAMPLE_RATE,
                     blocksize=int(self.BLOCK_DURATION * self.SAMPLE_RATE),
@@ -145,13 +168,29 @@ class AudioStreamManager:
                     callback=self._audio_callback,
                     finished_callback=self._on_stream_finished,
                 )
+                construct_ms = (time.perf_counter() - construct_start) * 1000
+                start_start = time.perf_counter()
                 stream.start()
+                start_ms = (time.perf_counter() - start_start) * 1000
                 
                 self.state.stream = stream
                 self._running = True
+                total_ms = (time.perf_counter() - open_start) * 1000
                 logger.debug(
                     f"音频流已启动: 采样率={self.SAMPLE_RATE}, "
                     f"块大小={int(self.BLOCK_DURATION * self.SAMPLE_RATE)}"
+                )
+                logger.info(
+                    "音频流启动完成: "
+                    f"InputStream构造耗时={construct_ms:.2f}ms, "
+                    f"stream.start耗时={start_ms:.2f}ms, "
+                    f"open总耗时={total_ms:.2f}ms"
+                )
+                timing_logger.info(
+                    "音频流启动完成: "
+                    f"InputStream构造耗时={construct_ms:.2f}ms, "
+                    f"stream.start耗时={start_ms:.2f}ms, "
+                    f"open总耗时={total_ms:.2f}ms"
                 )
                 return stream
                 
@@ -162,11 +201,14 @@ class AudioStreamManager:
     def close(self) -> None:
         """关闭音频流"""
         with self._stream_lock:
+            close_start = time.perf_counter()
             self._running = False  # 标记为停止
             if self.state.stream is not None:
                 try:
                     self.state.stream.close()
-                    logger.debug("音频流已关闭")
+                    close_ms = (time.perf_counter() - close_start) * 1000
+                    logger.info(f"音频流已关闭，close耗时: {close_ms:.2f}ms")
+                    timing_logger.info(f"音频流已关闭，close耗时: {close_ms:.2f}ms")
                 except Exception as e:
                     logger.debug(f"关闭音频流时发生错误: {e}")
                 finally:

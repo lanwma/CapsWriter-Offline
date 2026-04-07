@@ -51,7 +51,7 @@ class QwenASREngine:
             language: 目标语言
             temperature: 解码温度
         """
-        if stream.audio_data is None:
+        if stream.audio_data is None or len(stream.audio_data) == 0:
             return
 
         sr = 16000

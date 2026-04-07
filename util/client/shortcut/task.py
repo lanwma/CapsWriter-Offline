@@ -11,6 +11,7 @@ from threading import Event, Lock
 from typing import TYPE_CHECKING, Optional
 
 from config_client import ClientConfig as Config
+from util import get_logger
 from . import logger
 from util.tools.my_status import Status
 
@@ -19,6 +20,8 @@ if TYPE_CHECKING:
     from util.client.state import ClientState
     from util.client.audio.recorder import AudioRecorder
 
+
+timing_logger = get_logger('client_timing')
 
 
 class ShortcutTask:
@@ -69,6 +72,7 @@ class ShortcutTask:
 
     def launch(self) -> None:
         """启动录音任务"""
+        launch_start = time.perf_counter()
         with self._transition_lock:
             if self.is_recording:
                 logger.debug(f"[{self.shortcut.key}] 忽略重复开始录音")
@@ -78,11 +82,18 @@ class ShortcutTask:
                 logger.error(f"[{self.shortcut.key}] 音频流管理器未初始化，无法开始录音")
                 return
 
-            if not self.state.stream_manager.ensure_open():
-                logger.warning(f"[{self.shortcut.key}] 麦克风未就绪，取消本次录音")
-                return
-
             logger.info(f"[{self.shortcut.key}] 触发：开始录音")
+
+            ensure_start = time.perf_counter()
+            if not self.state.stream_manager.ensure_open():
+                ensure_ms = (time.perf_counter() - ensure_start) * 1000
+                logger.warning(f"[{self.shortcut.key}] ensure_open() 失败，耗时: {ensure_ms:.2f}ms")
+                logger.warning(f"[{self.shortcut.key}] 麦克风未就绪，取消本次录音")
+                timing_logger.warning(f"[{self.shortcut.key}] ensure_open() 失败，耗时: {ensure_ms:.2f}ms")
+                return
+            ensure_ms = (time.perf_counter() - ensure_start) * 1000
+            logger.info(f"[{self.shortcut.key}] ensure_open() 同步耗时: {ensure_ms:.2f}ms")
+            timing_logger.info(f"[{self.shortcut.key}] ensure_open() 同步耗时: {ensure_ms:.2f}ms")
 
             # 记录开始时间
             self.recording_start_time = time.time()
@@ -108,8 +119,13 @@ class ShortcutTask:
                 self.state.loop,
             )
 
+            launch_ms = (time.perf_counter() - launch_start) * 1000
+            logger.info(f"[{self.shortcut.key}] launch() 主线程耗时: {launch_ms:.2f}ms")
+            timing_logger.info(f"[{self.shortcut.key}] launch() 主线程耗时: {launch_ms:.2f}ms")
+
     def cancel(self) -> None:
         """取消录音任务（时间过短）"""
+        cancel_start = time.perf_counter()
         with self._transition_lock:
             logger.debug(f"[{self.shortcut.key}] 取消录音任务（时间过短）")
 
@@ -123,9 +139,13 @@ class ShortcutTask:
                 self.task = None
 
             self._release_mic_if_needed()
+            cancel_ms = (time.perf_counter() - cancel_start) * 1000
+            logger.info(f"[{self.shortcut.key}] cancel() 总耗时: {cancel_ms:.2f}ms")
+            timing_logger.info(f"[{self.shortcut.key}] cancel() 总耗时: {cancel_ms:.2f}ms")
 
     def finish(self) -> None:
         """完成录音任务"""
+        finish_start = time.perf_counter()
         with self._transition_lock:
             if not self.is_recording:
                 logger.debug(f"[{self.shortcut.key}] 忽略重复结束录音")
@@ -153,6 +173,9 @@ class ShortcutTask:
                 self._restore_key()
 
             self._release_mic_if_needed()
+            finish_ms = (time.perf_counter() - finish_start) * 1000
+            logger.info(f"[{self.shortcut.key}] finish() 总耗时: {finish_ms:.2f}ms")
+            timing_logger.info(f"[{self.shortcut.key}] finish() 总耗时: {finish_ms:.2f}ms")
 
     def should_debounce_toggle(self) -> bool:
         """检查是否应忽略过近的重复切换事件"""

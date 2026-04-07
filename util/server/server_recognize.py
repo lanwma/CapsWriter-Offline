@@ -115,6 +115,21 @@ def recognize(recognizer, punc_model, task: Task) -> Result:
         if task.is_final:
             result.duration += task.overlap
 
+        if samples.size == 0:
+            logger.warning(
+                f"识别片段为空，已跳过: task={task.task_id[:8]}, "
+                f"is_final={task.is_final}, source={task.source}"
+            )
+            if not task.is_final:
+                return result
+
+            result.time_start = task.time_start
+            result.time_submit = task.time_submit
+            result.time_complete = time.time()
+            result = _results.pop(task.task_id)
+            result.is_final = True
+            return result
+
         logger.debug(
             f"识别片段: task={task.task_id[:8]}, duration={duration:.2f}s, "
             f"offset={task.offset:.2f}s, is_final={task.is_final}"
